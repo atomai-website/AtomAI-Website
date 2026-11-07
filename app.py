@@ -43,7 +43,12 @@ from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 
-DATA_DIR = Path(__file__).parent / "data"
+BASE_DIR = Path(__file__).parent
+# Accept either "data/" or "DATA/" — Linux hosts (Render) are case-sensitive.
+DATA_DIR = next(
+    (d for d in (BASE_DIR / "data", BASE_DIR / "DATA") if d.is_dir()),
+    BASE_DIR / "data",
+)
 DPO_CSV_PATH = DATA_DIR / "dpo_database.csv"
 DPO_PARQUET_PATH = DATA_DIR / "dpo_database.parquet"
 ELEMENTS_PATH = DATA_DIR / "elements.csv"
@@ -262,6 +267,133 @@ app.jinja_env.filters["oxidation"] = format_oxidation_state
 
 
 # ----------------------------------------------------------------------
+# Presentation helpers (no effect on data or search logic)
+# ----------------------------------------------------------------------
+
+from markupsafe import Markup, escape
+
+
+def chem_formula(raw: str) -> Markup:
+    """'Sr2NiWO6' -> 'Sr<sub>2</sub>NiWO<sub>6</sub>'."""
+    safe = str(escape(raw or ""))
+    return Markup(re.sub(r"(\d+)", r"<sub>\1</sub>", safe))
+
+
+def sci_number(value) -> str:
+    """Display a stored numeric string compactly (max 4 decimals) without
+    changing the underlying database value."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "\u2014"
+    if v != v:
+        return "\u2014"
+    text = f"{v:.4f}".rstrip("0").rstrip(".")
+    return text if text not in ("", "-0") else "0"
+
+
+def dpo_pattern(raw: str) -> Markup:
+    """"AA'BB'O6" -> AA&prime;BB&prime;O<sub>6</sub>."""
+    safe = str(escape((raw or "").strip().replace("'", "\u2032")))
+    return Markup(re.sub(r"(\d+)", r"<sub>\1</sub>", safe))
+
+
+app.jinja_env.filters["chem"] = chem_formula
+app.jinja_env.filters["dpo_pattern"] = dpo_pattern
+app.jinja_env.filters["sci"] = sci_number
+
+
+# Custom PNG assets ------------------------------------------------------
+# Drop your PNG files into static/icons/ (or directly into static/).
+# A slot is matched by file name (case, spaces, dashes and underscores are
+# ignored), e.g. "Elements supported.png" fills the "stat_elements" slot.
+# If no matching file exists, a blank white box of the SAME size is shown.
+
+ASSET_SLOTS = {
+    "stat_elements": ["Elements supported", "Elements Supported"],
+    "stat_known": ["Previously known DPOs", "Previously known", "Known DPOs"],
+    "stat_predicted": ["Predicted DPOs", "Predicted"],
+    "stat_accuracy": ["ML Prediction Accuracy", "ML accuracy", "Prediction accuracy"],
+    "flow_predict": ["AI-Based Property Prediction", "AI Based Property Prediction"],
+    "flow_database": ["Curated Materials Database", "Curated Database"],
+    "flow_search": ["Interactive Search Platform", "Interactive Search"],
+    "flow_discovery": ["New Materials Discovery", "New Material Discovery"],
+    "app_solar": ["Solar Cell Materials", "Solar Cell"],
+    "app_photo": ["Photocatalysts", "Photocatalyst"],
+    "app_pec": ["PEC Water Splitting Materials", "PEC Water Splitting", "PEC"],
+    "du_logo": ["DU"],
+    "supervisor_photo": ["Supervisor", "Imtiaz Ahmed", "Dr Imtiaz Ahmed", "Imtiaz", "Principal Investigator", "PI"],
+}
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _find_asset(aliases):
+    wanted = {_norm(a) for a in aliases}
+    for folder in (BASE_DIR / "static" / "icons", BASE_DIR / "static"):
+        if not folder.is_dir():
+            continue
+        for f in sorted(folder.iterdir()):
+            if f.suffix.lower() == ".png" and _norm(f.stem) in wanted:
+                return f.relative_to(BASE_DIR / "static").as_posix()
+    return None
+
+
+def asset(slot: str, kind: str, alt: str = "") -> Markup:
+    """Render a custom PNG if supplied; otherwise a blank white box that has
+    exactly the same footprint (see .asset--<kind> in style.css)."""
+    from flask import url_for
+
+    path = _find_asset(ASSET_SLOTS.get(slot, [slot]))
+    if path:
+        return Markup(
+            f'<img class="asset asset--{kind}" src="{url_for("static", filename=path)}" '
+            f'alt="{escape(alt)}">'
+        )
+    return Markup(f'<span class="asset asset--{kind} asset--blank" role="presentation"></span>')
+
+
+app.jinja_env.globals["asset"] = asset
+
+
+# Editable people / contact details --------------------------------------
+# Anything wrapped in [square brackets] is a placeholder to replace later.
+DEPT = "Department of Electrical and Electronic Engineering, University of Dhaka"
+LAB_NAME = "Materials Science Research Laboratory (MSRL)"
+SUPERVISOR = {
+    "name": "Dr. Imtiaz Ahmed",
+    "role": "Principal Investigator",
+    "lab": LAB_NAME,
+    "affiliation": DEPT,
+    "email": "imtiaz@du.ac.bd",
+    "phone": "+8801712782833",
+}
+RESEARCHERS = [
+    {
+        "name": "Durjoy Halder",
+        "role": "Graduate Researcher",
+        "lab": LAB_NAME,
+        "affiliation": DEPT,
+        "email": "durjoyhalder73@gmail.com",
+        "phone": "+8801770578521",
+        "photo": "Durjoy.png",
+    },
+    {
+        "name": "Usama Bin Sehab",
+        "role": "Graduate Researcher",
+        "lab": LAB_NAME,
+        "affiliation": DEPT,
+        "email": "usama.sehab@gmail.com",
+        "phone": "+8801568395935",
+        "photo": "Usama.png",
+    },
+]
+LAB_URL = "https://sites.google.com/view/m-s-r-l/home?authuser=0"
+
+
+# ----------------------------------------------------------------------
 # Filtering (modular — add more criteria here as needed, e.g. stability,
 # Material_Status, DPO_Type, tolerance_factor, mu... every filter just
 # narrows dpo_df in memory and reuses build_material_dict for the output).
@@ -333,6 +465,9 @@ def home():
         total_elements_raw=elements_df["Element"].nunique(),
         total_known=known_count,
         total_predicted=predicted_count,
+        supervisor=SUPERVISOR,
+        researchers=RESEARCHERS,
+        lab_url=LAB_URL,
     )
 
 
@@ -346,6 +481,9 @@ def band_gap_search():
         statuses = [s.strip() for s in statuses.split(",") if s.strip()]
     valid_statuses = {"Known", "Predicted"}
     statuses = [s for s in statuses if s in valid_statuses]
+    application = data.get("application")
+    if application not in ("Photocatalyst", "Solar Cell"):
+        application = None
 
     if min_v is None or max_v is None:
         return jsonify({"error": "Please provide a valid minimum and maximum band gap."}), 400
@@ -361,6 +499,7 @@ def band_gap_search():
             "min": min_v,
             "max": max_v,
             "statuses": statuses,
+            "application": application,
         }
     )
 
