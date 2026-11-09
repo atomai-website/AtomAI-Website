@@ -3,28 +3,58 @@
   "use strict";
 
   /* -------------------------------------------------------------
-     1. Material families dropdown
+     1. Mobile navigation
      ------------------------------------------------------------- */
-  const trigger = document.getElementById("familyMenuTrigger");
-  const panel = document.getElementById("familyMenuPanel");
+  const navToggle = document.getElementById("navToggle");
+  const navLinksEl = document.getElementById("navLinks");
+  function setNav(open) {
+    if (!navToggle || !navLinksEl) return;
+    navLinksEl.classList.toggle("is-open", open);
+    navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (navToggle && navLinksEl) {
+    navToggle.addEventListener("click", () => setNav(!navLinksEl.classList.contains("is-open")));
+    navLinksEl.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => setNav(false)));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNav(false); });
+    window.addEventListener("resize", () => { if (window.innerWidth > 920) setNav(false); });
+  }
 
-  if (trigger && panel) {
-    trigger.addEventListener("click", (e) => {
+
+  /* -------------------------------------------------------------
+     1b. Theme switch (light / dark) + Material Families menu
+     ------------------------------------------------------------- */
+  const root = document.documentElement;
+  const themeBtn = document.getElementById("themeToggle");
+  function applyTheme(theme, animate) {
+    root.setAttribute("data-theme", theme);
+    if (themeBtn) {
+      themeBtn.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+      themeBtn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+    }
+    try { localStorage.setItem("atomai-theme", theme); } catch (e) {}
+  }
+  if (themeBtn) {
+    applyTheme(root.getAttribute("data-theme") === "dark" ? "dark" : "light", false);
+    themeBtn.addEventListener("click", () =>
+      applyTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark", true)
+    );
+  }
+
+  const families = document.getElementById("families");
+  const familiesBtn = document.getElementById("familiesBtn");
+  function setFamilies(open) {
+    if (!families || !familiesBtn) return;
+    families.classList.toggle("is-open", open);
+    familiesBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (families && familiesBtn) {
+    familiesBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const isOpen = panel.classList.toggle("is-open");
-      trigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      setFamilies(!families.classList.contains("is-open"));
     });
-    document.addEventListener("click", (e) => {
-      if (!panel.contains(e.target) && e.target !== trigger) {
-        panel.classList.remove("is-open");
-        trigger.setAttribute("aria-expanded", "false");
-      }
-    });
+    document.addEventListener("click", (e) => { if (!families.contains(e.target)) setFamilies(false); });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        panel.classList.remove("is-open");
-        trigger.setAttribute("aria-expanded", "false");
-      }
+      if (e.key === "Escape" && families.classList.contains("is-open")) { setFamilies(false); familiesBtn.focus(); }
     });
   }
 
@@ -32,263 +62,237 @@
      2. Scrollspy — highlight the active nav link
      ------------------------------------------------------------- */
   const navLinks = Array.from(document.querySelectorAll(".nav__links a[data-nav]"));
-  const sections = navLinks
-    .map((link) => document.getElementById(link.dataset.nav))
-    .filter(Boolean);
-
-  if (sections.length) {
+  const spyTargets = [];
+  navLinks.forEach((link) => {
+    const key = link.dataset.nav;
+    if (key === "top") {
+      document.querySelectorAll(".hero, .stats").forEach((el) => spyTargets.push([el, "top"]));
+    } else {
+      const el = document.getElementById(key);
+      if (el) spyTargets.push([el, key]);
+    }
+  });
+  if (spyTargets.length && "IntersectionObserver" in window) {
+    const keyFor = new Map(spyTargets);
     const spy = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            navLinks.forEach((l) => l.classList.remove("active"));
-            const active = navLinks.find((l) => l.dataset.nav === entry.target.id);
-            if (active) active.classList.add("active");
-          }
+          if (!entry.isIntersecting) return;
+          const key = keyFor.get(entry.target);
+          navLinks.forEach((l) => l.classList.toggle("active", l.dataset.nav === key));
         });
       },
-      { rootMargin: "-40% 0px -50% 0px", threshold: 0 }
+      { rootMargin: "-40% 0px -55% 0px", threshold: 0 }
     );
-    sections.forEach((s) => spy.observe(s));
+    spyTargets.forEach(([el]) => spy.observe(el));
   }
 
-  /* -------------------------------------------------------------
-     3. Reveal-on-scroll for .reveal elements
-     ------------------------------------------------------------- */
-  const revealTargets = document.querySelectorAll(".reveal");
-  if (revealTargets.length) {
-    const revealObserver = new IntersectionObserver(
-      (entries, obs) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("in-view");
-            obs.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.15 }
-    );
-    revealTargets.forEach((el) => revealObserver.observe(el));
-  }
 
   /* -------------------------------------------------------------
-     4. Timeline active-year highlight while scrolling
+     2b. Scroll reveal (once per element) + timeline node tracking
      ------------------------------------------------------------- */
-  const timelineItems = document.querySelectorAll(".timeline__item");
-  if (timelineItems.length) {
-    const timelineObserver = new IntersectionObserver(
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const revealEls = Array.from(document.querySelectorAll("[data-reveal]"));
+  function showEl(el, delay) {
+    el.style.setProperty("--d", delay + "ms");
+    el.classList.add("is-visible");
+    // after the entrance finishes, hand transitions back to the hover system
+    setTimeout(() => el.classList.add("is-done"), 700 + delay);
+  }
+  if (!("IntersectionObserver" in window) || reduceMotion) {
+    revealEls.forEach((el) => showEl(el, 0));
+  } else {
+    const revealIO = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          entry.target.classList.toggle("in-view", entry.isIntersecting);
+        const batch = entries.filter((en) => en.isIntersecting)
+          .sort((a, b) => (a.target.compareDocumentPosition(b.target) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+        batch.forEach((en, i) => {
+          showEl(en.target, Math.min(i, 5) * 100);
+          revealIO.unobserve(en.target);
         });
       },
-      { threshold: 0.5 }
+      { threshold: 0.12, rootMargin: "0px 0px -6% 0px" }
     );
-    timelineItems.forEach((item) => timelineObserver.observe(item));
+    revealEls.forEach((el) => revealIO.observe(el));
   }
 
-  /* -------------------------------------------------------------
-     5. Animated stat counters
-     ------------------------------------------------------------- */
-  const statNums = document.querySelectorAll(".stat-card__num");
-  if (statNums.length) {
-    const countUp = (el) => {
-      const target = parseFloat(el.dataset.target) || 0;
-      const suffix = el.dataset.suffix || "";
-      const prefix = el.dataset.prefix || "";
-      const duration = 1200;
-      const start = performance.now();
-
-      const step = (now) => {
-        const progress = Math.min((now - start) / duration, 1);
-        const eased = 1 - Math.pow(1 - progress, 3);
-        const value = target * eased;
-        const display = Number.isInteger(target) ? Math.round(value) : value.toFixed(1);
-        el.innerHTML = prefix + display + suffix;
-        if (progress < 1) requestAnimationFrame(step);
-      };
-      requestAnimationFrame(step);
-    };
-
-    const statObserver = new IntersectionObserver(
-      (entries, obs) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            countUp(entry.target);
-            obs.unobserve(entry.target);
-          }
+  // Vision timeline: draw the line once, light up each node as its milestone arrives
+  const timeline = document.querySelector(".zigzag--vision");
+  if (timeline) {
+    if (!("IntersectionObserver" in window) || reduceMotion) {
+      timeline.classList.add("is-visible");
+      timeline.querySelectorAll(".zz__node").forEach((n) => n.classList.add("is-active"));
+    } else {
+      const lineIO = new IntersectionObserver((en) => {
+        if (en[0].isIntersecting) { timeline.classList.add("is-visible"); lineIO.disconnect(); }
+      }, { threshold: 0.15 });
+      lineIO.observe(timeline);
+      const nodeIO = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          if (!en.isIntersecting) return;
+          const node = en.target.querySelector(".zz__node");
+          if (node) node.classList.add("is-active");
+          nodeIO.unobserve(en.target);
         });
-      },
-      { threshold: 0.4 }
-    );
-    statNums.forEach((el) => statObserver.observe(el));
+      }, { threshold: 0.5 });
+      timeline.querySelectorAll(".zz").forEach((z) => nodeIO.observe(z));
+    }
   }
 
   /* -------------------------------------------------------------
-     6. Ion notation — "Bi3+" -> "Bi" + superscript "3+"
-     ------------------------------------------------------------- */
-  const formatIons = (scope) => {
-    scope.querySelectorAll(".ion-notation").forEach((el) => {
-      const raw = el.dataset.ion || el.textContent.trim();
-      const match = raw.match(/^([A-Za-z]+)(\d+)([+-])$/);
-      if (match) {
-        const [, symbol, num, sign] = match;
-        el.innerHTML = `${symbol}<sup>${num}${sign}</sup>`;
-      }
-    });
-  };
-  formatIons(document);
-
-  /* -------------------------------------------------------------
-     7. AJAX search — same Flask route ("/"), no full page reload,
-        no scroll jump. Falls back to a normal form submit if fetch
-        fails for any reason.
-     ------------------------------------------------------------- */
-  const form = document.getElementById("searchForm");
-  const resultsWrapper = document.getElementById("resultsWrapper");
-  const searchBtn = document.getElementById("searchBtn");
-
-  if (form && resultsWrapper) {
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-
-      // Move focus off the input so the on-screen keyboard / caret
-      // doesn't cause an unexpected jump, without scrolling the page.
-      document.activeElement && document.activeElement.blur();
-
-      const originalBtnHTML = searchBtn.innerHTML;
-      searchBtn.disabled = true;
-      searchBtn.innerHTML = "<span>Searching&hellip;</span>";
-
-      try {
-        const formData = new FormData(form);
-        const response = await fetch(form.action || window.location.pathname, {
-          method: "POST",
-          body: formData,
-        });
-        const html = await response.text();
-
-        const parsed = new DOMParser().parseFromString(html, "text/html");
-        const newResults = parsed.getElementById("resultsWrapper");
-        const newInputs = parsed.querySelectorAll("#searchForm input");
-
-        if (newResults) {
-          resultsWrapper.innerHTML = newResults.innerHTML;
-        }
-        // Reflect any server-side normalization (capitalization) back
-        // into the visible inputs without moving focus or scrolling.
-        if (newInputs.length) {
-          newInputs.forEach((input) => {
-            const local = form.querySelector(`#${input.id}`);
-            if (local) local.value = input.value;
-          });
-        }
-
-        // Re-apply reveal/animation classes for any new result cards.
-        resultsWrapper.querySelectorAll(".reveal").forEach((el) => el.classList.add("in-view"));
-        formatIons(resultsWrapper);
-      } catch (err) {
-        // Network or parsing issue — fall back to a normal submit.
-        form.submit();
-      } finally {
-        searchBtn.disabled = false;
-        searchBtn.innerHTML = originalBtnHTML;
-      }
-    });
-  }
-
-  /* -------------------------------------------------------------
-     8. Shared helpers for the client-rendered searches below
+     3. Chemical notation helpers
      ------------------------------------------------------------- */
   function escapeHtml(str) {
     const div = document.createElement("div");
     div.textContent = str == null ? "" : String(str);
     return div.innerHTML;
   }
+  // "Sr2NiWO6" -> Sr<sub>2</sub>NiWO<sub>6</sub>
+  function chem(str) {
+    return escapeHtml(str).replace(/(\d+)/g, "<sub>$1</sub>");
+  }
+  // "Bi3+" -> Bi<sup>3+</sup>
+  const formatIons = (scope) => {
+    scope.querySelectorAll(".ion").forEach((el) => {
+      const raw = el.dataset.ion || el.textContent.trim();
+      const m = raw.match(/^([A-Za-z]+)(\d+)([+-])$/);
+      if (m) el.innerHTML = `${m[1]}<sup>${m[2]}${m[3]}</sup>`;
+    });
+  };
+  formatIons(document);
 
   function fmtNum(v, digits) {
     return typeof v === "number" && !Number.isNaN(v) ? v.toFixed(digits) : "\u2014";
   }
+  // Compact display of a stored numeric string (max 4 decimals); data is unchanged.
+  function sci(v) {
+    const n = parseFloat(v);
+    if (Number.isNaN(n)) return "\u2014";
+    const t = n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    return t === "" || t === "-0" ? "0" : t;
+  }
 
   /* -------------------------------------------------------------
-     9. Shared material-detail renderer — used by the modal, called
-        from both the Band Gap and Atom results tables. Mirrors the
-        Jinja markup of a server-rendered .result card exactly
-        (.result__header, .badges, .result__metrics, .metric-col,
-        .atoms-title, .atom-table) so a row looks identical whether
-        it came from the server or a client-side fetch. There is
-        exactly one copy of this function — do not duplicate it.
+     4. Formula search — AJAX on the same Flask route ("/"),
+        falls back to a normal submit if fetch fails.
+     ------------------------------------------------------------- */
+  const form = document.getElementById("searchForm");
+  const resultsWrapper = document.getElementById("resultsWrapper");
+  const searchBtn = document.getElementById("searchBtn");
+
+  if (form && resultsWrapper) {
+    form.querySelectorAll("input").forEach((i) =>
+      i.addEventListener("input", () => i.classList.remove("is-invalid"))
+    );
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      // Client-side validation: all four sites are required.
+      const empty = Array.from(form.querySelectorAll("input[required]")).filter((i) => !i.value.trim());
+      form.querySelectorAll("input[required]").forEach((i) => i.classList.toggle("is-invalid", !i.value.trim()));
+      if (empty.length) {
+        resultsWrapper.innerHTML =
+          '<div class="notice notice--error"><strong>Missing elements.</strong><p>Please provide all four site elements (A, A\u2032, B, B\u2032).</p></div>';
+        empty[0].focus();
+        return;
+      }
+
+      document.activeElement && document.activeElement.blur();
+      const originalLabel = searchBtn.textContent;
+      searchBtn.disabled = true;
+      searchBtn.textContent = "Searching\u2026";
+
+      try {
+        const response = await fetch(form.action || window.location.pathname, {
+          method: "POST",
+          body: new FormData(form),
+        });
+        const html = await response.text();
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const newResults = parsed.getElementById("resultsWrapper");
+        if (newResults) resultsWrapper.innerHTML = newResults.innerHTML;
+
+        // Reflect server-side normalisation (capitalisation) in the inputs.
+        parsed.querySelectorAll("#searchForm input").forEach((input) => {
+          const local = form.querySelector("#" + input.id);
+          if (local) local.value = input.value;
+        });
+        formatIons(resultsWrapper);
+      } catch (err) {
+        form.submit();
+      } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = originalLabel;
+      }
+    });
+  }
+
+  /* -------------------------------------------------------------
+     5. Material detail renderer (modal) — mirrors the Jinja markup
      ------------------------------------------------------------- */
   const SITE_LABELS = ["A", "A\u2032", "B", "B\u2032"];
 
   function renderMaterialDetailHTML(m) {
     const atomsRow = (m.atoms || [])
-      .map(
-        (a) =>
-          `<span class="ion-notation" data-ion="${escapeHtml(a.Atom_Key)}">${escapeHtml(a.Atom_Key)}</span>`
-      )
+      .map((a) => `<span class="ion" data-ion="${escapeHtml(a.Atom_Key)}">${escapeHtml(a.Atom_Key)}</span>`)
       .join("");
 
     const atomRows = (m.atoms || [])
       .map(
         (a, i) => `
         <tr>
-          <td><span class="atom-card__site">${SITE_LABELS[i] || ""}</span></td>
-          <td class="atom-table__ion"><span class="ion-notation" data-ion="${escapeHtml(a.Atom_Key)}">${escapeHtml(a.Atom_Key)}</span></td>
-          <td>${escapeHtml(a.radii)} &Aring;</td>
-          <td>${escapeHtml(a.Electronegativity)}</td>
-          <td>${escapeHtml(a.Ionization_Energy)}</td>
-          <td>${escapeHtml(a.Electron_Affinity)}</td>
-          <td>${escapeHtml(a.Atomic_Volume)}</td>
-          <td>${escapeHtml(a.HOMO)}</td>
-          <td>${escapeHtml(a.LUMO)}</td>
+          <td class="t-left t-site">${SITE_LABELS[i] || ""}</td>
+          <td class="t-left"><span class="ion" data-ion="${escapeHtml(a.Atom_Key)}">${escapeHtml(a.Atom_Key)}</span></td>
+          <td>${sci(a.radii)}</td>
+          <td>${sci(a.Electronegativity)}</td>
+          <td>${sci(a.Ionization_Energy)}</td>
+          <td>${sci(a.Electron_Affinity)}</td>
+          <td>${sci(a.Atomic_Volume)}</td>
+          <td>${sci(a.HOMO)}</td>
+          <td>${sci(a.LUMO)}</td>
           <td>${escapeHtml(a.Group)}</td>
           <td>${escapeHtml(a.Period)}</td>
-          <td>${escapeHtml(a.Thermal_Conductivity)}</td>
+          <td>${sci(a.Thermal_Conductivity)}</td>
         </tr>`
       )
       .join("");
 
-    const typeChip = m.dpo_type_pattern
-      ? `<span class="type-chip">${escapeHtml(m.dpo_type_pattern)}</span>`
+    const pattern = m.dpo_type_pattern
+      ? `<span class="result__pattern">${chem(m.dpo_type_pattern)}</span>`
       : "";
+    const typeLabel = escapeHtml((m.dpo_type_label || "").replace(/\s+/g, "-"));
 
-    const confidenceBlock =
+    const confidence =
       m.mean_confidence != null
-        ? `<div class="metric-col"><label>Confidence</label><span>${fmtNum(m.mean_confidence * 100, 1)}<small>%</small></span></div>`
+        ? `<div class="metric"><dt>Confidence</dt><dd>${fmtNum(m.mean_confidence * 100, 1)}<small>%</small></dd></div>`
         : "";
 
     return `
       <div class="result__header">
         <div>
-          <p class="eyebrow eyebrow--type">${escapeHtml(m.dpo_type_label)} DPO ${typeChip}</p>
-          <h3 class="formula">
-            <svg viewBox="0 0 20 20" fill="none" class="formula__icon"><circle cx="10" cy="10" r="2" fill="currentColor"/><ellipse cx="10" cy="10" rx="8" ry="3.2" stroke="currentColor" stroke-width="1.2"/><ellipse cx="10" cy="10" rx="8" ry="3.2" stroke="currentColor" stroke-width="1.2" transform="rotate(60 10 10)"/><ellipse cx="10" cy="10" rx="8" ry="3.2" stroke="currentColor" stroke-width="1.2" transform="rotate(120 10 10)"/></svg>
-            ${escapeHtml(m.Formula)}
-          </h3>
+          <p class="result__type">${typeLabel} DPO ${pattern}</p>
+          <h3 class="formula">${chem(m.Formula)}</h3>
         </div>
         <div class="badges">
-          <span class="badge ${m.stable ? "badge--stable" : "badge--unstable"}"><i class="badge__dot"></i>${m.stable ? "Stable" : "Unstable"}</span>
-          <span class="badge ${m.Material_Status === "Known" ? "badge--known" : "badge--predicted"}"><i class="badge__dot"></i>${m.Material_Status === "Known" ? "Known" : "Predicted by ML"}</span>
+          <span class="badge ${m.stable ? "badge--stable" : "badge--unstable"}">${m.stable ? "Stable" : "Unstable"}</span>
+          <span class="badge ${m.Material_Status === "Known" ? "badge--known" : "badge--predicted"}">${m.Material_Status === "Known" ? "Known" : "Predicted by ML"}</span>
         </div>
       </div>
-      <div class="result__metrics">
-        <div class="metric-col metric-col--wide">
-          <label>Formula with oxidation state</label>
-          <span class="ion-row">${atomsRow}</span>
-        </div>
-        <div class="metric-col"><label>Tolerance factor</label><span>${fmtNum(m.tolerance_factor, 4)}</span></div>
-        <div class="metric-col"><label>Octahedral factor</label><span>${fmtNum(m.mu, 4)}</span></div>
-        <div class="metric-col"><label>Band gap</label><span>${fmtNum(m.Band_Gap, 4)} <small>eV</small></span></div>
-        ${confidenceBlock}
-      </div>
+      <dl class="metrics">
+        <div class="metric metric--wide"><dt>Formula with oxidation state</dt><dd class="ion-row">${atomsRow}</dd></div>
+        <div class="metric"><dt>Tolerance factor</dt><dd>${fmtNum(m.tolerance_factor, 4)}</dd></div>
+        <div class="metric"><dt>Octahedral factor</dt><dd>${fmtNum(m.mu, 4)}</dd></div>
+        <div class="metric"><dt>Band gap</dt><dd>${fmtNum(m.Band_Gap, 4)}<small>eV</small></dd></div>
+        ${confidence}
+      </dl>
       <h4 class="atoms-title">Ionic composition</h4>
-      <div class="atom-table-wrap">
-        <table class="atom-table">
+      <div class="table-scroll">
+        <table class="data-table">
           <thead><tr>
-            <th>Site</th><th>Ion</th><th>Radius</th><th>Electronegativity</th>
-            <th>Ionization energy</th><th>Electron affinity</th><th>Atomic volume</th>
-            <th>HOMO</th><th>LUMO</th><th>Group</th><th>Period</th><th>Thermal cond.</th>
+            <th class="t-left">Site</th><th class="t-left">Ion</th><th>Radius (\u00c5)</th><th>Electronegativity</th>
+            <th>Ionization energy (kJ/mol)</th><th>Electron affinity (kJ/mol)</th><th>Atomic volume (cm\u00b3/mol)</th>
+            <th>HOMO (eV)</th><th>LUMO (eV)</th><th>Group</th><th>Period</th><th>Thermal cond. (W/m\u00b7K)</th>
           </tr></thead>
           <tbody>${atomRows}</tbody>
         </table>
@@ -305,6 +309,7 @@
     formatIons(modalBody);
     modalOverlay.classList.add("is-open");
     document.body.style.overflow = "hidden";
+    modalClose && modalClose.focus();
   }
   function closeMaterialModal() {
     if (!modalOverlay) return;
@@ -313,19 +318,12 @@
   }
   if (modalClose) modalClose.addEventListener("click", closeMaterialModal);
   if (modalOverlay) {
-    modalOverlay.addEventListener("click", (e) => {
-      if (e.target === modalOverlay) closeMaterialModal();
-    });
+    modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeMaterialModal(); });
   }
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeMaterialModal();
-  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMaterialModal(); });
 
   /* -------------------------------------------------------------
-     10. Generalized results table — one implementation shared by
-         the Band Gap search and the Atom search below. Each call
-         site gets its own container + state via the factory; the
-         sort/filter/paginate/render logic lives in exactly one place.
+     6. Property-search results table (sort + paginate)
      ------------------------------------------------------------- */
   const TABLE_COLUMNS = [
     { key: "Formula", label: "Formula", type: "string" },
@@ -333,14 +331,14 @@
     { key: "Band_Gap", label: "Band Gap (eV)", type: "number" },
     { key: "tolerance_factor", label: "Tolerance Factor", type: "number" },
     { key: "mu", label: "\u03bc", type: "number" },
-    { key: "stable", label: "Stable", type: "bool" },
+    { key: "stable", label: "Stability", type: "bool" },
     { key: "Material_Status", label: "Status", type: "string" },
     { key: "mean_confidence", label: "Confidence", type: "number" },
   ];
   const PAGE_SIZE = 25;
 
   function createResultsTable(container, emptyMessage) {
-    const state = { all: [], filtered: [], sortKey: "Formula", sortDir: "asc", page: 1, searched: false };
+    const state = { all: [], filtered: [], sortKey: "Formula", sortDir: "asc", page: 1, searched: false, application: null };
 
     function applySort() {
       state.filtered = state.all.slice();
@@ -354,9 +352,7 @@
           bv = typeof bv === "number" ? bv : -Infinity;
           return (av - bv) * dir;
         }
-        if (col && col.type === "bool") {
-          return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
-        }
+        if (col && col.type === "bool") return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
         av = String(av || "").toLowerCase();
         bv = String(bv || "").toLowerCase();
         return av.localeCompare(bv) * dir;
@@ -367,8 +363,9 @@
 
     function renderRow(m) {
       const tr = document.createElement("tr");
+      tr.tabIndex = 0;
       tr.innerHTML = `
-        <td>${escapeHtml(m.Formula)}</td>
+        <td>${chem(m.Formula)}</td>
         <td>${escapeHtml(m.dpo_type_label)}</td>
         <td>${fmtNum(m.Band_Gap, 4)}</td>
         <td>${fmtNum(m.tolerance_factor, 4)}</td>
@@ -377,15 +374,15 @@
         <td>${escapeHtml(m.Material_Status)}</td>
         <td>${m.mean_confidence != null ? fmtNum(m.mean_confidence * 100, 1) + "%" : "\u2014"}</td>`;
       tr.addEventListener("click", () => openMaterialModal(m));
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openMaterialModal(m); });
       return tr;
     }
 
     function render() {
       if (!state.all.length) {
-        const html = state.searched
-          ? '<div class="notice notice--empty"><strong>No matches.</strong><p>No Double Perovskite materials were found in that range. Try different search criteria.</p></div>'
-          : `<div class="notice notice--empty"><strong>No results yet.</strong><p>${emptyMessage}</p></div>`;
-        container.innerHTML = html;
+        container.innerHTML = state.searched
+          ? '<div class="notice notice--empty"><strong>No matches</strong><p>No Double Perovskite materials were found in that range. Try different search criteria.</p></div>'
+          : `<div class="notice notice--empty"><strong>No results yet</strong><p>${emptyMessage}</p></div>`;
         return;
       }
 
@@ -400,16 +397,19 @@
         return `<th data-key="${c.key}" class="${isSorted ? "is-sorted" : ""}">${c.label}<span class="sort-arrow">${arrow}</span></th>`;
       }).join("");
 
+      const appNote = state.application ? `<span>Application: ${escapeHtml(state.application)}</span>` : "";
+
       container.innerHTML = `
         <div class="table-toolbar">
-          <span class="table-toolbar__count">${state.filtered.length.toLocaleString()} material${state.filtered.length === 1 ? "" : "s"} found</span>
+          <span class="table-toolbar__count"><strong>${state.filtered.length.toLocaleString()}</strong> material${state.filtered.length === 1 ? "" : "s"} found</span>
+          ${appNote}
         </div>
         <div class="ion-table-wrap">
           <table class="ion-table"><thead><tr>${theadCells}</tr></thead><tbody></tbody></table>
         </div>
         <div class="pagination">
           <button type="button" data-page="prev" ${state.page <= 1 ? "disabled" : ""}>&larr; Prev</button>
-          <span class="pagination__page">Page ${state.page} of ${totalPages}</span>
+          <span>Page ${state.page} of ${totalPages}</span>
           <button type="button" data-page="next" ${state.page >= totalPages ? "disabled" : ""}>Next &rarr;</button>
         </div>`;
 
@@ -419,16 +419,11 @@
       container.querySelectorAll(".ion-table thead th").forEach((th) => {
         th.addEventListener("click", () => {
           const key = th.dataset.key;
-          if (state.sortKey === key) {
-            state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
-          } else {
-            state.sortKey = key;
-            state.sortDir = "asc";
-          }
+          if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+          else { state.sortKey = key; state.sortDir = "asc"; }
           applySort();
         });
       });
-
       const prevBtn = container.querySelector('[data-page="prev"]');
       const nextBtn = container.querySelector('[data-page="next"]');
       if (prevBtn) prevBtn.addEventListener("click", () => { state.page -= 1; render(); });
@@ -436,71 +431,85 @@
     }
 
     return {
-      setResults(materials) {
+      setResults(materials, application) {
         state.all = materials || [];
+        state.application = application || null;
         state.searched = true;
         applySort();
       },
-      showMessage(html) {
-        container.innerHTML = html;
-      },
+      showMessage(html) { container.innerHTML = html; },
     };
   }
 
   /* -------------------------------------------------------------
-     11. Band Gap Range search — POST /api/band-gap-search
+     7. Band-gap property search — POST /api/band-gap-search
      ------------------------------------------------------------- */
   const bgResultsWrapper = document.getElementById("bgResultsWrapper");
   const bgSearchBtn = document.getElementById("bgSearchBtn");
   if (bgResultsWrapper && bgSearchBtn) {
-    const bgTable = createResultsTable(bgResultsWrapper, "Enter a band gap range above and click Search Materials.");
+    const bgTable = createResultsTable(
+      bgResultsWrapper,
+      "Select an application and enter material properties to explore matching compositions."
+    );
     const bgStatusToggle = document.getElementById("bgStatusToggle");
+    const bgMin = document.getElementById("bgMin");
+    const bgMax = document.getElementById("bgMax");
+
+    function selectedApplication() {
+      const r = document.querySelector('#applicationChoice input[name="application"]:checked');
+      return r ? r.value : null;
+    }
 
     async function runBandGapSearch() {
-      const min = parseFloat(document.getElementById("bgMin").value);
-      const max = parseFloat(document.getElementById("bgMax").value);
+      const min = parseFloat(bgMin.value);
+      const max = parseFloat(bgMax.value);
+      bgMin.classList.toggle("is-invalid", Number.isNaN(min));
+      bgMax.classList.toggle("is-invalid", Number.isNaN(max));
       if (Number.isNaN(min) || Number.isNaN(max)) {
         bgTable.showMessage(
           '<div class="notice notice--error"><strong>Missing values.</strong><p>Please provide both a minimum and maximum band gap.</p></div>'
         );
         return;
       }
-      const originalHTML = bgSearchBtn.innerHTML;
+      const originalLabel = bgSearchBtn.textContent;
       bgSearchBtn.disabled = true;
-      bgSearchBtn.innerHTML = "<span>Searching&hellip;</span>";
+      bgSearchBtn.textContent = "Searching\u2026";
       try {
         const statuses = bgStatusToggle
-          ? Array.from(bgStatusToggle.querySelectorAll(".toggle-btn.is-active")).map((b) => b.dataset.status)
+          ? Array.from(bgStatusToggle.querySelectorAll(".segmented__btn.is-active")).map((b) => b.dataset.status)
           : [];
+        const application = selectedApplication();
         const res = await fetch("/api/band-gap-search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ min, max, statuses }),
+          body: JSON.stringify({ min, max, statuses, application }),
         });
         const data = await res.json();
         if (data.error) {
           bgTable.showMessage(`<div class="notice notice--error"><strong>Search failed.</strong><p>${escapeHtml(data.error)}</p></div>`);
         } else {
-          bgTable.setResults(data.materials);
+          bgTable.setResults(data.materials, data.application);
         }
       } catch (err) {
         bgTable.showMessage('<div class="notice notice--error"><strong>Network error.</strong><p>Please try again.</p></div>');
       } finally {
         bgSearchBtn.disabled = false;
-        bgSearchBtn.innerHTML = originalHTML;
+        bgSearchBtn.textContent = originalLabel;
       }
     }
 
+    [bgMin, bgMax].forEach((el) => {
+      el.addEventListener("input", () => el.classList.remove("is-invalid"));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") runBandGapSearch(); });
+    });
+
     if (bgStatusToggle) {
-      bgStatusToggle.querySelectorAll(".toggle-btn").forEach((btn) => {
+      bgStatusToggle.querySelectorAll(".segmented__btn").forEach((btn) => {
         btn.addEventListener("click", () => {
-          btn.classList.toggle("is-active");
-          // Auto-rerun the search on status change once min/max are filled
-          // in, so switching Known/Predicted updates the table immediately
-          // without a separate button click.
-          const min = document.getElementById("bgMin").value;
-          const max = document.getElementById("bgMax").value;
-          if (min !== "" && max !== "") runBandGapSearch();
+          const on = btn.classList.toggle("is-active");
+          btn.setAttribute("aria-pressed", on ? "true" : "false");
+          // Re-run automatically once a range is entered.
+          if (bgMin.value !== "" && bgMax.value !== "") runBandGapSearch();
         });
       });
     }
