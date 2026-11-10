@@ -141,7 +141,7 @@ document.documentElement.classList.add("js");
   <section id="explorer" class="section">
     <div class="container">
       <header class="section__head" data-reveal>
-        <h2>Find a Compound by Site Chemistry</h2>
+        <h2>Find a Compound by Chemical Formula</h2>
       </header>
 
       <form method="POST" class="panel" data-reveal id="searchForm" autocomplete="off" novalidate>
@@ -152,7 +152,7 @@ document.documentElement.classList.add("js");
 
         <div class="site-groups">
           <fieldset class="site-group">
-            <legend>A-site</legend>
+            <legend>-</legend>
             <div class="field">
               <label for="A">A Site</label>
               <input list="elements" id="A" name="A" placeholder="e.g. Ag" value="{{ submitted.A or '' }}" required spellcheck="false">
@@ -163,7 +163,7 @@ document.documentElement.classList.add("js");
             </div>
           </fieldset>
           <fieldset class="site-group">
-            <legend>B-site</legend>
+            <legend>-</legend>
             <div class="field">
               <label for="B">B Site</label>
               <input list="elements" id="B" name="B" placeholder="e.g. Nb" value="{{ submitted.B or '' }}" required spellcheck="false">
